@@ -5,7 +5,7 @@
 #
 
 # Application objects
-OBJS=main.o 
+OBJS=main.o swd.o gpio.o usb_core.o usb_ep0d.o usb_ep0a.o
 
 # The main dependency name
 OUTPUT=project
@@ -25,7 +25,7 @@ LD=$(TOOLCHAIN_PREFIX)ld
 SIZE=$(TOOLCHAIN_PREFIX)size
 OBJCOPY=$(TOOLCHAIN_PREFIX)objcopy
 
-CFLAGS=-Os
+CFLAGS=-Os -Wall
 CFLAGS+=-mthumb -mcpu=cortex-m3
 CFLAGS+=-I./src -I./cmsis/CoreSupport -I./cmsis/DeviceSupport/ST/STM32F10x
 CFLAGS+=-DSTM32F10X_MD

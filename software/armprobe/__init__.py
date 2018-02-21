@@ -17,4 +17,5 @@ __all__ = [
     
     "setup",
     "setup_swd",
+    "hexdump",
 ]

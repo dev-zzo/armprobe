@@ -5,17 +5,12 @@ Blue Pill pin assignments:
 * SWDIO: B12
 * SWCLK: B13
 * nRST:  B0
-* Host IF USART1-TX
-* Host IF USART1-RX
-
-Notes:
-
-* In case of excessive latency on the serial port:
-  http://store.chipkin.com/articles/rs232-how-do-i-reduce-latency-on-com-ports
 
 """
 
+import usb1
 import struct
+from hexdump import hexdump
 
 class ProbeException(Exception):
     pass
@@ -33,15 +28,40 @@ class SWDException(Exception):
 class BluePillProbe(object):
     """ADI version 5 probe wrapper"""
 
-    def __init__(self, port):
-        self._port = port
+    def __init__(self):
+        # TODO: do it right
+        self._context = usb1.USBContext()
+        self._handle = self._context.openByVendorIDAndProductID(0xDECA, 0x0002, skip_on_error=True)
+        if self._handle is None:
+            raise ProbeException("probe not found")
+        self._iface = self._handle.claimInterface(0)
+        self._handle.setConfiguration(1)
         self.ping()
+        
+    def _execute(self, op, param8=0, param16=0, param32=0):
+        cmd = struct.pack('<IBBHI', 0xDEADBABE, op, param8, param16, param32)
+        print '>', hexdump(cmd, 's')
+        self._handle.bulkWrite(1, cmd)
+        rsp = self._handle.bulkRead(2, 12)
+        print '<', hexdump(rsp, 'b')
+        if len(rsp) < 5:
+            raise ProbeException("received response too short")
+        tag, status = struct.unpack('<IB', rsp[:5])
+        if tag != 0xDEADBABE:
+            raise ProbeException("invalid tag received (%08X)" % tag)
+        if status != 0:
+            raise ProbeException("probe reports an error %d" % status)
+        if len(rsp) >= 6:
+            swd_response = rsp[5]
+            if swd_response != 1:
+                raise SWDException(swd_response)
+            if len(rsp) >= 12:
+                data, = struct.unpack('<I', rsp[8:])
+                return data
+        return None
 
     def ping(self):
-        self._port.write('?')
-        rsp = self._port.read(1)
-        if rsp != '?':
-            raise ProbeException("out of sync!")
+        self._execute(0)
         return True
 
     def configure_swj(self, enabled=True):
@@ -51,19 +71,11 @@ class BluePillProbe(object):
             bits |= 0x01
         else:
             pass
-        cmd = struct.pack('<BB', ord('c'), bits)
-        self._port.write(cmd)
-        status, = struct.unpack('B', self._port.read(1))
-        if status:
-            raise ProbeException("bleh")
+        self._execute(1, param8=bits)
 
     def switch_to_swd(self):
         """Issue the SWJ-DP sequence to switch to SWD"""
-        cmd = struct.pack('<B', ord('y'))
-        self._port.write(cmd)
-        status, = struct.unpack('B', self._port.read(1))
-        if status:
-            raise ProbeException("bleh")
+        self._execute(2)
 
     @staticmethod
     def _build_request(is_read, is_ap, a32):
@@ -87,33 +99,15 @@ class BluePillProbe(object):
 
     def _read(self, is_ap, a32):
         """Execute a read transaction via SWD"""
-        cmd = struct.pack('<BBB', ord('t'), 0, BluePillProbe._build_request(True, is_ap, a32))
-        self._port.write(cmd)
-        status, response = struct.unpack('BB', self._port.read(2))
-        if response != 0x1:
-            raise SWDException(response)
-        data, = struct.unpack('<I', self._port.read(4))
-        return data
+        return self._execute(3, param8=BluePillProbe._build_request(True, is_ap, a32))
 
     def _write(self, is_ap, a32, data):
         """Execute a write transaction via SWD"""
-        cmd = struct.pack('<BBBI', ord('T'), 0, BluePillProbe._build_request(False, is_ap, a32), data)
-        self._port.write(cmd)
-        status, response = struct.unpack('BB', self._port.read(2))
-        if response != 0x1:
-            raise SWDException(response)
+        self._execute(4, param8=BluePillProbe._build_request(False, is_ap, a32), param32=data)
 
     def configure_gpio(self, enabled=True):
         """Configure the GPIO unit (currently only enable/disable)"""
-        cmd = struct.pack('<BB', ord('G'), int(enabled))
-        self._port.write(cmd)
-        status, = struct.unpack('B', self._port.read(1))
-        if status:
-            raise ProbeException("bleh")
+        self._execute(5, param8=enabled)
 
     def set_gpio(self, states):
-        cmd = struct.pack('<BB', ord('g'), int(states))
-        self._port.write(cmd)
-        status, = struct.unpack('B', self._port.read(1))
-        if status:
-            raise ProbeException("bleh")
+        self._execute(6, param8=states)

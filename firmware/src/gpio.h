@@ -1,0 +1,1 @@
+#ifndef __gpio_h#define __gpio_hvoid gpio_enable(int enabled);void gpio_control(uint8_t states);#endif /* __gpio_h */
