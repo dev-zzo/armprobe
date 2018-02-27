@@ -1,4 +1,5 @@
 #include "usb_core.h"
+#include "debug.h"
 
 /******************************************************************************/
 /* Hardware abstraction and support code                                      */
@@ -8,9 +9,11 @@ void USB_Enable(int Enabled)
 {
     /* Force reset */
     USB->CNTR = USB_CNTR_FRES;
-    /* Clear all pending ints */
-    USB->ISTR = 0;
     if (Enabled) {
+        /* Clear reset */
+        USB->CNTR = 0;
+        /* Clear all pending ints */
+        USB->ISTR = 0;
         /* Enable RESET int */
         USB->CNTR = USB_CNTR_RESETM;
     } else {
@@ -165,7 +168,7 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 #endif
 {
     uint16_t Istr = USB->ISTR & (USB->CNTR | USB_ISTR_EP_ID | USB_ISTR_DIR);
-
+    
     if (Istr & USB_ISTR_RESET) {
         USB->ISTR = (uint16_t)~USB_ISTR_RESET;
         USB_ResetHandler();
@@ -177,6 +180,7 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
     while (Istr & USB_ISTR_CTR) {
         int EPIndex = Istr & USB_ISTR_EP_ID;
         uint16_t EPxR = USB_GetEPxR(EPIndex);
+        DEBUG_PrintString("\r\nEPxR: ");DEBUG_PrintU16(EPxR);
         /* Is the RX completion event set? */
         if (EPxR & USB_EPxR_CTR_RX) {
             if (EPxR & USB_EPxR_SETUP) {

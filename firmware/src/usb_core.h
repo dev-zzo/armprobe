@@ -188,17 +188,7 @@ void USB_EP0Handler(USB_EventType Event);
 #define USB_HANDLED_INTS (0)
 
 #define USB_EP0_SIZE 8
-#define USB_EP1_SIZE 12
-#define USB_EP2_SIZE 12
-
-#if 1
-#define DEBUG_PrintString(s) DEBUG_PrintString_(s)
-#define DEBUG_PrintHex(p,n) DEBUG_PrintHex_((const void *)(p), (n))
-void DEBUG_PrintString_(const char *s);
-void DEBUG_PrintHex_(const void *p, unsigned n);
-#else
-#define DEBUG_PrintString(s)
-#define DEBUG_PrintHex(p,n)
-#endif
+#define USB_EP1_SIZE 64
+#define USB_EP2_SIZE 64
 
 #endif /* __stm32_usbcore_h */

@@ -5,7 +5,7 @@
 #
 
 # Application objects
-OBJS=main.o swd.o gpio.o usb_core.o usb_ep0d.o usb_ep0a.o
+OBJS=main.o debug.o swd.o gpio.o usb_core.o usb_ep0d.o usb_ep0a.o
 
 # The main dependency name
 OUTPUT=project

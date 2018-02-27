@@ -20,37 +20,6 @@ void led_activity(int state)
     GPIOC->BSRR = state ? GPIO_BSRR_BR13 : GPIO_BSRR_BS13;
 }
 
-/* Debug interface implementation */
-
-static void USART1_Send(uint8_t value)
-{
-    /* Wait until the next byte can be sent */
-    while (!(USART1->SR & USART_SR_TXE));
-    /* Send the next one over */
-    USART1->DR = value;
-}
-
-void DEBUG_PrintString_(const char *s)
-{
-    while (*s) {
-        USART1_Send(*s);
-        s++;
-    }
-}
-
-static const char hextab[] = "0123456789ABCDEF";
-void DEBUG_PrintHex_(const void *p, unsigned n)
-{
-    const uint8_t *pp = (const uint8_t *)p;
-    while (n--) {
-        char hi = hextab[*pp >> 4];
-        char lo = hextab[*pp & 15];
-        USART1_Send(hi);
-        USART1_Send(lo);
-        pp++;
-    }
-}
-
 /* Commands implementation */
 
 enum {
