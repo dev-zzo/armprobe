@@ -30,6 +30,7 @@ class BluePillProbe(object):
 
     def __init__(self):
         # TODO: do it right
+        self.timeout = 5
         self._context = usb1.USBContext()
         self._handle = self._context.openByVendorIDAndProductID(0xDECA, 0x0002, skip_on_error=True)
         if self._handle is None:
@@ -38,30 +39,8 @@ class BluePillProbe(object):
         self._handle.setConfiguration(1)
         self.ping()
         
-    def _execute(self, op, param8=0, param16=0, param32=0):
-        cmd = struct.pack('<IBBHI', 0xDEADBABE, op, param8, param16, param32)
-        print '>', hexdump(cmd, 's')
-        self._handle.bulkWrite(1, cmd)
-        rsp = self._handle.bulkRead(2, 12)
-        print '<', hexdump(rsp, 'b')
-        if len(rsp) < 5:
-            raise ProbeException("received response too short")
-        tag, status = struct.unpack('<IB', rsp[:5])
-        if tag != 0xDEADBABE:
-            raise ProbeException("invalid tag received (%08X)" % tag)
-        if status != 0:
-            raise ProbeException("probe reports an error %d" % status)
-        if len(rsp) >= 6:
-            swd_response = rsp[5]
-            if swd_response != 1:
-                raise SWDException(swd_response)
-            if len(rsp) >= 12:
-                data, = struct.unpack('<I', rsp[8:])
-                return data
-        return None
-
     def ping(self):
-        self._execute(0)
+        self._handle.controlWrite(0x40, 0, 0x0000, 0x0000, "", self.timeout)
         return True
 
     def configure_swj(self, enabled=True):
@@ -71,11 +50,11 @@ class BluePillProbe(object):
             bits |= 0x01
         else:
             pass
-        self._execute(1, param8=bits)
+        self._handle.controlWrite(0x40, 1, bits, 0x0000, "", self.timeout)
 
     def switch_to_swd(self):
         """Issue the SWJ-DP sequence to switch to SWD"""
-        self._execute(2)
+        self._handle.controlWrite(0x40, 2, 0x0000, 0x0000, "", self.timeout)
 
     @staticmethod
     def _build_request(is_read, is_ap, a32):
@@ -99,15 +78,20 @@ class BluePillProbe(object):
 
     def _read(self, is_ap, a32):
         """Execute a read transaction via SWD"""
-        return self._execute(3, param8=BluePillProbe._build_request(True, is_ap, a32))
+        data = self._handle.controlRead(0x40, 3, BluePillProbe._build_request(True, is_ap, a32), 0x0000, 4, self.timeout)
+        return struct.unpack("<I", data)[0]
 
     def _write(self, is_ap, a32, data):
         """Execute a write transaction via SWD"""
-        self._execute(4, param8=BluePillProbe._build_request(False, is_ap, a32), param32=data)
+        self._handle.controlWrite(0x40, 4, BluePillProbe._build_request(False, is_ap, a32), 0x0000, struct.pack("<I", data), self.timeout)
 
     def configure_gpio(self, enabled=True):
         """Configure the GPIO unit (currently only enable/disable)"""
-        self._execute(5, param8=enabled)
+        self._handle.controlWrite(0x40, 5, int(enabled), 0x0000, "", self.timeout)
 
     def set_gpio(self, states):
-        self._execute(6, param8=states)
+        """Control the GPIO outputs"""
+        self._handle.controlWrite(0x40, 6, states & 0xFFFF, 0x0000, "", self.timeout)
+
+    def get_status(self):
+        return self._handle.controlRead(0x40, 7, 0x0000, 0x0000, 1, self.timeout)[0]

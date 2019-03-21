@@ -1,19 +1,17 @@
 #include "usb_core.h"
+#include "debug.h"
 
 /******************************************************************************/
 /* Control endpoint 0 handling code -- application specific                   */
 /******************************************************************************/
 
-extern uint8_t USB_DeviceConfiguration;
-void USB_EP0ArmForSetup(void);
+void led_activity(int state);
 
 #define ARRAY_SIZE(foo) (sizeof(foo)/sizeof(foo[0]))
 
 const struct {
     USB_CONFIGURATION_DESCRIPTOR Config;
     USB_INTERFACE_DESCRIPTOR Interface0;
-    USB_ENDPOINT_DESCRIPTOR EP1Out;
-    USB_ENDPOINT_DESCRIPTOR EP2In;
 } __attribute__((packed)) USB_Config1Descriptor = {
     {
         sizeof(USB_CONFIGURATION_DESCRIPTOR), /* Length */
@@ -30,27 +28,11 @@ const struct {
         USB_INTERFACE_DESCRIPTOR_TYPE, /* DescriptorType */
         0, /* InterfaceNumber */
         0, /* AlternateSetting */
-        2, /* NumEndpoints */
+        0, /* NumEndpoints */
         USB_DEVICE_CLASS_VENDOR_SPECIFIC, /* InterfaceClass */
         0x00, /* InterfaceSubClass */
         0x00, /* InterfaceProtocol */
         5, /* iInterface */
-    },
-    {
-        sizeof(USB_ENDPOINT_DESCRIPTOR), /* Length */
-        USB_ENDPOINT_DESCRIPTOR_TYPE, /* DescriptorType */
-        USB_ENDPOINT_OUT(1), /* EndpointAddress */
-        USB_ENDPOINT_TYPE_BULK, /* Attributes */
-        USB_EP1_SIZE, /* MaxPacketSize */
-        0, /* Interval */
-    },
-    {
-        sizeof(USB_ENDPOINT_DESCRIPTOR), /* Length */
-        USB_ENDPOINT_DESCRIPTOR_TYPE, /* DescriptorType */
-        USB_ENDPOINT_IN(2), /* EndpointAddress */
-        USB_ENDPOINT_TYPE_BULK, /* Attributes */
-        USB_EP2_SIZE, /* MaxPacketSize */
-        0, /* Interval */
     },
 };
 
@@ -73,11 +55,11 @@ const USB_STRING_DESCRIPTOR USB_StringProdDescriptor = {
     USB_STRING_DESCRIPTOR_TYPE,
     { 'A', 'R', 'M', ' ', 'A', 'D', 'I', 'v', '5', ' ', 'P', 'r', 'o', 'b', 'e', },
 };
-const USB_STRING_DESCRIPTOR USB_StringSerialDescriptor = {
-    sizeof(USB_STRING_DESCRIPTOR) + 2 * 1,
-    USB_STRING_DESCRIPTOR_TYPE,
-    { '1', },
-};
+static struct {
+    uint8_t bLength;
+    uint8_t bDescriptorType;
+    uint16_t bString[24];
+} USB_StringSerialDescriptor;
 const USB_STRING_DESCRIPTOR USB_StringConfig1Descriptor = {
     sizeof(USB_STRING_DESCRIPTOR) + 2 * 8,
     USB_STRING_DESCRIPTOR_TYPE,
@@ -92,7 +74,7 @@ const USB_STRING_DESCRIPTOR * const USB_StringDescriptors[] = {
     &USB_String0Descriptor,
     &USB_StringMfgDescriptor,
     &USB_StringProdDescriptor,
-    &USB_StringSerialDescriptor,
+    (USB_STRING_DESCRIPTOR *)&USB_StringSerialDescriptor,
     &USB_StringConfig1Descriptor,
     &USB_StringIface0Descriptor,
 };
@@ -102,17 +84,35 @@ const USB_DEVICE_DESCRIPTOR USB_DeviceDescriptor = {
     USB_DEVICE_DESCRIPTOR_TYPE,
     0x0110,
     USB_DEVICE_CLASS_VENDOR_SPECIFIC,
-    0x00,
-    0x00,
+    0x00, /* bDeviceSubClass */
+    0x00, /* bDeviceProtocol */
     USB_EP0_SIZE,
     0xDECA, /* idVendor */
     0x0002, /* idProduct */
     0x0100,
-    1,
-    2,
-    3,
-    ARRAY_SIZE(USB_ConfigDescriptors),
+    1, /* iManufacturer */
+    2, /* iProduct */
+    3, /* iSerialNumber */
+    1, /* bNumConfigurations */
 };
+
+static char USB_NibbleToChar(int nibble)
+{
+    return 'A' + nibble;
+}
+
+static void USB_UpdateSerial(void)
+{
+    const uint8_t *Serial = (const uint8_t *)0x1FFFF7E8;
+    uint16_t *SerialStr = &USB_StringSerialDescriptor.bString[0];
+    for (int i = 0; i < 12; ++i) {
+        *SerialStr++ = USB_NibbleToChar((*Serial) >> 4);
+        *SerialStr++ = USB_NibbleToChar((*Serial) & 0x0F);
+        Serial++;
+    }
+    USB_StringSerialDescriptor.bLength = sizeof(USB_STRING_DESCRIPTOR) + 2 * 24;
+    USB_StringSerialDescriptor.bDescriptorType = USB_STRING_DESCRIPTOR_TYPE;
+}
 
 BOOL USB_GetDescriptor(unsigned Type, unsigned Index, const void **pData, uint16_t *pLength)
 {
@@ -135,6 +135,9 @@ BOOL USB_GetDescriptor(unsigned Type, unsigned Index, const void **pData, uint16
     case USB_STRING_DESCRIPTOR_TYPE:
         if (Index >= ARRAY_SIZE(USB_StringDescriptors)) {
             return FALSE;
+        }
+        if (Index == 3) {
+            USB_UpdateSerial();
         }
         Data = USB_StringDescriptors[Index];
         *pLength = ((const USB_STRING_DESCRIPTOR *)Data)->bLength;
@@ -160,8 +163,6 @@ void USB_Deconfigure(void)
 
 #define USB_EP0_TX_BUFFER_AT (USB_EP_BUFFERS_START)
 #define USB_EP0_RX_BUFFER_AT (USB_EP0_TX_BUFFER_AT + USB_EP0_SIZE)
-#define USB_EP1_RX_BUFFER_AT (USB_EP0_RX_BUFFER_AT + USB_EP0_SIZE)
-#define USB_EP2_TX_BUFFER_AT (USB_EP1_RX_BUFFER_AT + USB_EP1_SIZE)
 
 BOOL USB_SetConfiguration(unsigned Configuration)
 {
@@ -173,13 +174,7 @@ BOOL USB_SetConfiguration(unsigned Configuration)
         break;
     case 1:
         USB_Deconfigure();
-        /* Configure the endpoints and buffer descriptors */
-        USB_ConfigureRxBuffer(1, USB_EP_BUFFER_RX, USB_EP1_RX_BUFFER_AT, USB_EP1_SIZE);
-        USB_ConfigureTxBuffer(2, USB_EP_BUFFER_TX, USB_EP2_TX_BUFFER_AT);
-        USB_SetEPxR(1, USB_EPxR_EP_BULK | 1);
-        USB_SetEPRxTxStatus(1, USB_EPxR_STAT_RX_VALID | USB_EPxR_STAT_TX_DIS);
-        USB_SetEPxR(2, USB_EPxR_EP_BULK | 2);
-        USB_SetEPRxTxStatus(2, USB_EPxR_STAT_RX_DIS | USB_EPxR_STAT_TX_NAK);
+        /* Nothing here for now */
         break;
     default:
         /* Failed */
@@ -197,4 +192,92 @@ void USB_EP0Configure(void)
     /* Configure endpoint 0 */
     USB_SetEPxR(0, USB_EPxR_EP_CONTROL);
     USB_EP0ArmForSetup();
+}
+
+void cmd_swd_enable(int enabled);
+void cmd_switch_to_swd(void);
+int cmd_swd_read(uint8_t cmd_request, void *DataBuffer);
+int cmd_swd_write(uint8_t cmd_request, const void *DataBuffer);
+void cmd_gpio_configure(int enabled);
+void cmd_gpio_control(uint8_t bits);
+
+#define APP_REQUEST_PING 0
+#define APP_REQUEST_CONFIGURE_SWJ 1
+#define APP_REQUEST_SWITCH_TO_SWD 2
+#define APP_REQUEST_READ 3
+#define APP_REQUEST_WRITE 4
+#define APP_REQUEST_GPIO_CONFIGURE 5
+#define APP_REQUEST_GPIO_CONTROL 6
+#define APP_REQUEST_GET_STATUS 7
+
+static uint8_t DataBuffer[4];
+static int OpResult;
+
+BOOL USB_EP0SetupVendorRequestHandler(void)
+{
+    switch (USB_SetupPacket.Request) {
+
+    case APP_REQUEST_PING:
+        USB_EP0ArmForStatusIn();
+        return TRUE;
+
+    case APP_REQUEST_CONFIGURE_SWJ:
+        cmd_swd_enable(!!USB_SetupPacket.Value.Raw);
+        USB_EP0ArmForStatusIn();
+        return TRUE;
+
+    case APP_REQUEST_SWITCH_TO_SWD:
+        cmd_switch_to_swd();
+        USB_EP0ArmForStatusIn();
+        return TRUE;
+
+    case APP_REQUEST_READ:
+        OpResult = cmd_swd_read(USB_SetupPacket.Value.Raw & 0xFF, &DataBuffer[0]);
+        if (OpResult) {
+            return FALSE;
+        }
+        USB_EP0SetupDataIn(&DataBuffer[0], 4, USB_SetupPacket.Length);
+        return TRUE;
+
+    case APP_REQUEST_WRITE:
+        USB_EP0SetupDataOut(&DataBuffer[0], 4, USB_SetupPacket.Length);
+        return TRUE;
+
+    case APP_REQUEST_GPIO_CONFIGURE:
+        cmd_gpio_configure(!!USB_SetupPacket.Value.Raw);
+        USB_EP0ArmForStatusIn();
+        return TRUE;
+
+    case APP_REQUEST_GPIO_CONTROL:
+        cmd_gpio_control(USB_SetupPacket.Value.Raw & 0xFF);
+        USB_EP0ArmForStatusIn();
+        return TRUE;
+
+    case APP_REQUEST_GET_STATUS:
+        USB_EP0SetupDataIn(&OpResult, 1, USB_SetupPacket.Length);
+        return TRUE;
+
+    default:
+        break;
+    }
+    return FALSE;
+}
+
+BOOL USB_EP0OutTransferCompletionHandler(void)
+{
+    if (USB_SetupPacket.RequestType.Type == USB_REQUEST_VENDOR) {
+        switch (USB_SetupPacket.Request) {
+        case APP_REQUEST_WRITE:
+            OpResult = cmd_swd_write(USB_SetupPacket.Value.Raw & 0xFF, &DataBuffer[0]);
+            if (OpResult) {
+                led_activity(1);
+                return FALSE;
+            }
+            return TRUE;
+
+        default:
+            break;
+        }
+    }
+    return USB_EP0OutTransferCompletionStdHandler();
 }

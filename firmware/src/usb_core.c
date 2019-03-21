@@ -5,21 +5,29 @@
 /* Hardware abstraction and support code                                      */
 /******************************************************************************/
 
-void USB_Enable(int Enabled)
+void USB_Disable(void)
 {
-    /* Force reset */
-    USB->CNTR = USB_CNTR_FRES;
-    if (Enabled) {
-        /* Clear reset */
-        USB->CNTR = 0;
-        /* Clear all pending ints */
-        USB->ISTR = 0;
-        /* Enable RESET int */
-        USB->CNTR = USB_CNTR_RESETM;
-    } else {
-        /* Switch off the peripheral */
-        USB->CNTR = USB_CNTR_FRES | USB_CNTR_PDWN;
+    /* Switch off the peripheral */
+    USB->CNTR = USB_CNTR_FRES | USB_CNTR_PDWN;
+}
+
+void USB_Enable(void)
+{
+    /* If the unit was powered down, power it up and wait for startup time */
+    if (USB->CNTR & USB_CNTR_PDWN) {
+        unsigned counter;
+        USB->CNTR &= ~USB_CNTR_PDWN;
+        /* 1 us max = 72 NOPs at 72MHz */
+        for (counter = 72; counter > 0; counter--) {
+            __asm__ __volatile__("\n\tnop;"::);
+        }
     }
+    /* Clear reset */
+    USB->CNTR = 0;
+    /* Clear all pending ints */
+    USB->ISTR = 0;
+    /* Enable RESET int */
+    USB->CNTR = USB_CNTR_RESETM;
 }
 
 void USB_Init()
@@ -28,10 +36,10 @@ void USB_Init()
     RCC->APB1ENR |= RCC_APB1ENR_USBEN;
     RCC->APB1RSTR &= ~RCC_APB1RSTR_USBRST;
     /* Configure interrupts */
-    NVIC->IP[USB_LP_CAN1_RX0_IRQn] = 0x10;
-    NVIC->ISER[0] |= (1 << USB_LP_CAN1_RX0_IRQn);
+    NVIC_SetPriority(USB_LP_CAN1_RX0_IRQn, 0x10);
+    NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
     /* Enable the RESET interrupt */
-    USB_Enable(TRUE);
+    USB_Enable();
 }
 
 /******************************************************************************/
@@ -90,7 +98,9 @@ void USB_UserToEndpointMemcpy(unsigned EPIndex, unsigned BufferIndex, const void
 {
     USB_TxDescriptor *Descr = USB_GetTxDescriptor(EPIndex, BufferIndex);
     /* Copy data */
-    USB_UserToPMAMemcpy(UserBuffer, Descr->ADDR_TX, DataSize);
+    if (DataSize) {
+        USB_UserToPMAMemcpy(UserBuffer, Descr->ADDR_TX, DataSize);
+    }
     /* Update the count */
     Descr->COUNT_TX = DataSize;
 }
@@ -113,11 +123,10 @@ uint16_t USB_EndpointToUserMemcpy(unsigned EPIndex, unsigned BufferIndex, void *
 /* USB ISR handling routines                                                  */
 /******************************************************************************/
 
-void USB_EP0Configure(void);
-
 static void USB_ResetHandler(void)
 {
-    /* Clear ints */
+    DEBUG_PrintString("\r\nUSB RESET\r\n\r\n");
+    /* Clear any pending ints */
     USB->ISTR = 0;
     /* Setup intr mask */
     USB->CNTR = USB_CNTR_CTRM | USB_CNTR_RESETM | USB_HANDLED_INTS;
@@ -136,7 +145,6 @@ void USB_EPxNullHandler(USB_EventType Event)
     /* Nothing */
 }
 
-void USB_EP0Handler(USB_EventType Event);
 void USB_EP1Handler(USB_EventType Event) __attribute__((weak, alias("USB_EPxNullHandler")));
 void USB_EP2Handler(USB_EventType Event) __attribute__((weak, alias("USB_EPxNullHandler")));
 void USB_EP3Handler(USB_EventType Event) __attribute__((weak, alias("USB_EPxNullHandler")));
@@ -176,11 +184,12 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 
     /* TODO: support other interrupts */
 
-    /* Service the "correct transfer" int */
+    /* Service "correct transfer" ints */
     while (Istr & USB_ISTR_CTR) {
         int EPIndex = Istr & USB_ISTR_EP_ID;
+        /* Fetch and clear the endpoint flags */
         uint16_t EPxR = USB_GetEPxR(EPIndex);
-        DEBUG_PrintString("\r\nEPxR: ");DEBUG_PrintU16(EPxR);
+        USB_SetEPxR(EPIndex, EPxR & ~(USB_EPxR_CTR_RX | USB_EPxR_CTR_TX) & USB_EPxR_NONTOGGLED_MASK);
         /* Is the RX completion event set? */
         if (EPxR & USB_EPxR_CTR_RX) {
             if (EPxR & USB_EPxR_SETUP) {
@@ -196,8 +205,6 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
             /* Handle a IN transaction completion */
             USB_DispatchEvent(EPIndex, USB_IN_EVENT);
         }
-        /* Clear the endpoint flags */
-        USB_SetEPxR(EPIndex, EPxR & ~(USB_EPxR_CTR_RX | USB_EPxR_CTR_TX) & USB_EPxR_NONTOGGLED_MASK);
         /* Clear the int flag */
         USB->ISTR = (uint16_t)~USB_ISTR_CTR;
         /* Update the reg value; no masking needed */

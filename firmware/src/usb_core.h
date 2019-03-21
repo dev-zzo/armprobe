@@ -156,6 +156,7 @@ typedef struct {
 
 /* USB Packet Memory Area base address */
 #define PMA_BASE    (APB1PERIPH_BASE + 0x6000U)
+/* Offset of the buffer table */
 #define USB_BTABLE   0
 
 #define USB_EP_BUFFER_TX 0
@@ -168,19 +169,46 @@ typedef struct {
 
 /*********************** External USB core API  *******************************/
 
+/* Designates the type of event signaled to endpoint handler */
 typedef enum {
     USB_SETUP_EVENT,
     USB_OUT_EVENT,
     USB_IN_EVENT,
 } USB_EventType;
 
+/* The init function takes care of initializing the peripheral. */
 void USB_Init();
+void USB_Disable(void);
+void USB_Enable(void);
+
+/*
+ The configure functions are used to set up the buffers for endpoints.
+ To be called on changing the configuration.
+ */
 void USB_ConfigureTxBuffer(unsigned EPIndex, unsigned BufferIndex, uint16_t Address);
 void USB_ConfigureRxBuffer(unsigned EPIndex, unsigned BufferIndex, uint16_t Address, uint16_t Size);
 void USB_UserToEndpointMemcpy(unsigned EPIndex, unsigned BufferIndex, const void *UserBuffer, uint16_t DataSize);
 uint16_t USB_EndpointToUserMemcpy(unsigned EPIndex, unsigned BufferIndex, void *UserBuffer, uint16_t BufferSize);
 
+/*
+ This function should configure the endpoint zero.
+ To be implemented by the application.
+ */
+void USB_EP0Configure(void);
+
 void USB_EP0Handler(USB_EventType Event);
+/* Other endpoint handlers are declared with the similar function name */
+
+extern USB_SetupPacketDef USB_SetupPacket;
+extern uint8_t USB_DeviceConfiguration;
+
+void USB_EP0SetupDataOut(void *Buffer, uint16_t AvailableCount, uint16_t RequestedCount);
+void USB_EP0SetupDataIn(const void *Buffer, uint16_t AvailableCount, uint16_t RequestedCount);
+void USB_EP0ArmForStatusOut(void);
+void USB_EP0ArmForStatusIn(void);
+BOOL USB_EP0OutTransferCompletionStdHandler(void);
+void USB_EP0StatusCompletionStdHandler(void);
+void USB_EP0ArmForSetup(void);
 
 /*********************** Configuration parameters *****************************/
 
@@ -188,7 +216,5 @@ void USB_EP0Handler(USB_EventType Event);
 #define USB_HANDLED_INTS (0)
 
 #define USB_EP0_SIZE 8
-#define USB_EP1_SIZE 64
-#define USB_EP2_SIZE 64
 
 #endif /* __stm32_usbcore_h */

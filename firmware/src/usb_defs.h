@@ -64,6 +64,7 @@ typedef struct {
         struct {
             uint8_t Feature;
         } XxxFeature;
+        uint16_t Raw;
     } Value;
     union {
         struct {
@@ -75,6 +76,7 @@ typedef struct {
             uint8_t Index;
         } Interface;
         uint16_t LangID;
+        uint16_t Raw;
     } Index;
     uint16_t Length;
 } USB_SetupPacketDef;

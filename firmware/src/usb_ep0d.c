@@ -19,6 +19,7 @@ uint8_t USB_DeviceConfiguration = 0;
 
 void USB_EP0Stall(void)
 {
+    DEBUG_PrintString(" STALL");
     USB_SetEPRxTxStatus(0, USB_EPxR_STAT_RX_STALL | USB_EPxR_STAT_TX_STALL);
     USB_EP0TxRxCount = 0;
 }
@@ -60,6 +61,7 @@ void USB_EP0SetupDataOut(void *Buffer, uint16_t AvailableCount, uint16_t Request
     USB_EP0TxRxData = Buffer;
     USB_EP0TxRxCount = AvailableCount > RequestedCount ? RequestedCount : AvailableCount;
     USB_EP0LastPacket = FALSE;
+    DEBUG_PrintString(" ArmO ");DEBUG_PrintU16(USB_EP0TxRxCount);
     /* Arm the endpoint */
     USB_SetEPRxStatus(0, USB_EPxR_STAT_RX_VALID);
 }
@@ -70,13 +72,14 @@ void USB_EP0SetupDataIn(const void *Buffer, uint16_t AvailableCount, uint16_t Re
     USB_EP0TxRxCount = AvailableCount > RequestedCount ? RequestedCount : AvailableCount;
     USB_EP0LastPacket = FALSE;
     USB_EP0ZLPNeeded = RequestedCount != AvailableCount;
+    DEBUG_PrintString(" ArmI ");DEBUG_PrintU16(USB_EP0TxRxCount);
     /* Transfer data and arm the endpoint */
     USB_EP0DataInStage();
     /* Also allow the host to terminate early */
     USB_SetEPRxStatus(0, USB_EPxR_STAT_RX_VALID);
 }
 
-BOOL USB_EP0OutTransferCompletionHandler(void) __attribute__((weak, alias("USB_EP0StatusCompletionStdHandler")));
+BOOL USB_EP0OutTransferCompletionHandler(void) __attribute__((weak, alias("USB_EP0OutTransferCompletionStdHandler")));
 BOOL USB_EP0OutTransferCompletionStdHandler(void)
 {
     return TRUE;
@@ -84,12 +87,14 @@ BOOL USB_EP0OutTransferCompletionStdHandler(void)
 
 void USB_EP0ArmForStatusOut(void)
 {
+    DEBUG_PrintString(" Arm SO");
     /* Arm the endpoint */
     USB_SetEPRxStatus(0, USB_EPxR_STAT_RX_VALID);
 }
 
 void USB_EP0ArmForStatusIn(void)
 {
+    DEBUG_PrintString(" Arm SI");
     /* Dummy copying to set the COUNT_TX value */
     USB_UserToEndpointMemcpy(0, USB_EP_BUFFER_TX, NULL, 0);
     /* Arm the endpoint */
@@ -99,13 +104,14 @@ void USB_EP0ArmForStatusIn(void)
 void USB_EP0StatusCompletionHandler(void) __attribute__((weak, alias("USB_EP0StatusCompletionStdHandler")));
 void USB_EP0StatusCompletionStdHandler(void)
 {
-    if (USB_SetupPacket.Request == USB_REQUEST_SET_ADDRESS) {
+    if (USB_SetupPacket.RequestType.Type == USB_REQUEST_STANDARD && USB_SetupPacket.Request == USB_REQUEST_SET_ADDRESS) {
         /* Update the device address */
         USB->DADDR = USB_DADDR_EF | USB_SetupPacket.Value.SetAddress.Address;
+        DEBUG_PrintString(" ADDR SET: "); DEBUG_PrintU8(USB_SetupPacket.Value.SetAddress.Address);
     }
     /* Arm the endpoint */
     USB_EP0ArmForSetup();
-    DEBUG_PrintString("\r\nDONE");
+    DEBUG_PrintString(" STA");
 }
 
 BOOL USB_SetConfiguration(unsigned Configuration);
@@ -234,12 +240,20 @@ BOOL USB_EP0SetupEndpointRequestHandler(void)
 BOOL USB_EP0SetupClassRequestHandler(void) __attribute__((weak, alias("USB_EP0UnimplementedHandler")));
 BOOL USB_EP0SetupVendorRequestHandler(void) __attribute__((weak, alias("USB_EP0UnimplementedHandler")));
 
+/*
+ The SETUP handler should:
+ - Save the SETUP packet
+ - Set the endpoint to NAK all further requests
+ - Dispatch the handling depending on the request
+ The handler functions return a BOOL indicating whether handling was successful.
+ If handling failed, the endpoint will be stalled.
+ */
 void USB_EP0SetupHandler(void)
 {
     BOOL Result = FALSE;
     /* Save the packet */
     USB_EndpointToUserMemcpy(0, USB_EP_BUFFER_RX, &USB_SetupPacket, sizeof(USB_SetupPacket));
-    DEBUG_PrintString("\r\nSETUP: "); DEBUG_PrintHex(&USB_SetupPacket, sizeof(USB_SetupPacket));
+    DEBUG_PrintString("SETUP: "); DEBUG_PrintHex(&USB_SetupPacket, sizeof(USB_SetupPacket));
     /* Set the endpoint to NAK any further packets */
     USB_SetEPRxTxStatus(0, USB_EPxR_STAT_RX_NAK | USB_EPxR_STAT_TX_NAK);
     /* Dispatch the request */
@@ -279,7 +293,7 @@ void USB_EP0SetupHandler(void)
 
 void USB_EP0OutHandler(void)
 {
-    DEBUG_PrintString("\r\nOUT cmpl");
+    DEBUG_PrintString("OUT");
     if (USB_SetupPacket.RequestType.Dir == USB_REQUEST_HOST_TO_DEVICE) {
         /* Host was writing; one of the data transfer stages has completed */
         /* Transfer the data into the buffer */
@@ -302,8 +316,9 @@ void USB_EP0OutHandler(void)
 
 void USB_EP0InHandler(void)
 {
-    DEBUG_PrintString("\r\nIN cmpl; to go: ");DEBUG_PrintU32(USB_EP0TxRxCount);
+    DEBUG_PrintString("IN");
     if (USB_SetupPacket.RequestType.Dir == USB_REQUEST_DEVICE_TO_HOST) {
+        DEBUG_PrintString(" to go: "); DEBUG_PrintU32(USB_EP0TxRxCount);
         /* Host was reading; one of the data transfer stages has completed */
         if (USB_EP0TxRxCount > 0) {
             /* Transfer the data, if any, into the buffer */
@@ -330,8 +345,14 @@ void USB_EP0InHandler(void)
     }
 }
 
+/*
+ This is the main entry point for handling endpoint zero related completion events.
+ The function dispatches the handling based on the event type.
+ */
 void USB_EP0Handler(USB_EventType Event)
 {
+    DEBUG_PrintString("EP0S ");
+
     switch (Event) {
     case USB_SETUP_EVENT:
         USB_EP0SetupHandler();
@@ -343,4 +364,5 @@ void USB_EP0Handler(USB_EventType Event)
         USB_EP0InHandler();
         break;
     }
+    DEBUG_PrintString(" EP0E\r\n\r\n");
 }
